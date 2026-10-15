@@ -1,5 +1,0 @@
-ultralytics
-opencv-python
-streamlit
-streamlit-webrtc
-numpy
