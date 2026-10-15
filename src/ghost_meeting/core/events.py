@@ -13,6 +13,12 @@ class Event:
     timestamp: datetime
 
 
+# --- Clock: lets time-based rules fire even when nothing else happens ---
+@dataclass(frozen=True)
+class Tick(Event):
+    pass
+
+
 # --- Vision: raw observation, one per processed frame (or per second) ---
 @dataclass(frozen=True)
 class PersonCountObserved(Event):
