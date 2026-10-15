@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ghost-meeting"
+version = "0.1.0"
+description = "Edge-AI agent that detects ghost bookings and manages meeting rooms."
+requires-python = ">=3.11"
+# Runtime dependencies are added step by step, as each one is first needed.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
