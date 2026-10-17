@@ -1,0 +1,53 @@
+from datetime import datetime, timedelta
+
+from ghost_meeting.adapters.mock import MockCalendar, MockNotifier
+from ghost_meeting.core.actions import NotifyOrganizer
+from ghost_meeting.core.ports import Meeting
+from ghost_meeting.core.state_machine import RoomState
+from ghost_meeting.runner import RoomRunner
+
+T0 = datetime(2026, 1, 1, 10, 0, 0)
+
+
+def at(minutes: float) -> datetime:
+    return T0 + timedelta(minutes=minutes)
+
+
+def make_runner() -> tuple[RoomRunner, MockNotifier]:
+    calendar = MockCalendar()
+    calendar.add_meeting(Meeting("m1", "room1", "ahmet", at(0), at(60)))
+    notifier = MockNotifier()
+    return RoomRunner("room1", calendar, notifier), notifier
+
+
+def test_nobody_shows_up_organizer_gets_notified():
+    runner, notifier = make_runner()
+    for minute in range(0, 12):
+        runner.advance(at(minute), person_count=0)
+    assert notifier.sent == [NotifyOrganizer("room1", "m1", "ahmet")]
+    assert runner.machine.state == RoomState.NO_SHOW_NOTIFIED
+
+
+def test_someone_arrives_in_time_nobody_is_notified():
+    runner, notifier = make_runner()
+    runner.advance(at(0), person_count=0)
+    # Presence must hold for the 3 s debounce before the room counts as occupied.
+    runner.advance(at(5), person_count=1)
+    runner.advance(at(5) + timedelta(seconds=3), person_count=1)
+    runner.advance(at(12), person_count=1)
+    assert notifier.sent == []
+    assert runner.machine.state == RoomState.MEETING_IN_PROGRESS
+
+
+def test_meeting_end_returns_room_to_idle():
+    runner, _ = make_runner()
+    runner.advance(at(0), person_count=0)
+    runner.advance(at(61), person_count=0)
+    assert runner.machine.state == RoomState.IDLE
+
+
+def test_same_meeting_is_not_started_twice():
+    runner, notifier = make_runner()
+    for minute in range(0, 30):
+        runner.advance(at(minute), person_count=0)
+    assert len(notifier.sent) == 1
