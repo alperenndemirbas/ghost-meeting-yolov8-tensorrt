@@ -16,3 +16,8 @@ class Action:
 class NotifyOrganizer(Action):
     meeting_id: str
     organizer: str
+
+
+@dataclass(frozen=True)
+class AskToReserve(Action):
+    pass
