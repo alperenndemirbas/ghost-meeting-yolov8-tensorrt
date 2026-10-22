@@ -1,10 +1,13 @@
-"""Scenario 1 demo: python scripts/run_room.py [rtsp url]  (press q in the window to stop)
+"""Live demo: python scripts/run_room.py [rtsp url] [--scenario 1|2]  (press q to stop)
 
-A fake meeting starts in 5 seconds with a 20 second tolerance. Stay out of the
-camera's view and the MockNotifier should complain about 25 seconds from now.
+Scenario 1 (default): a fake meeting starts in 5 seconds with a 20 second tolerance.
+Stay out of the camera's view and the MockNotifier complains about 25 seconds from now.
+Scenario 2: no meeting is booked. Walk into view and stay for 15 seconds, and the
+MockPrompter asks whether to reserve the room.
 A debug window shows what the camera sees, with boxes around detected people.
 """
 
+import argparse
 import asyncio
 import sys
 from datetime import datetime, timedelta
@@ -45,25 +48,36 @@ def draw_overlay(frame: np.ndarray, detections: list[Detection], state_name: str
     cv2.putText(frame, status, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, GREEN, 2)
 
 
+def build_runner(scenario: int) -> RoomRunner:
+    """Scenario 1 books a fake meeting; scenario 2 leaves the calendar empty."""
+    calendar = MockCalendar()
+    if scenario == 1:
+        start = datetime.now() + timedelta(seconds=5)
+        calendar.add_meeting(
+            Meeting("m1", ROOM_ID, "ahmet", start, start + timedelta(minutes=5))
+        )
+    machine = RoomStateMachine(
+        ROOM_ID, tolerance=timedelta(seconds=20), dwell=timedelta(seconds=15)
+    )
+    return RoomRunner(ROOM_ID, calendar, MockNotifier(), MockPrompter(), machine=machine)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run one room against a live RTSP stream.")
+    parser.add_argument("url", nargs="?", default=DEFAULT_URL, help="RTSP stream address")
+    parser.add_argument("--scenario", type=int, choices=[1, 2], default=1)
+    return parser.parse_args()
+
+
 async def main() -> None:
-    url = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_URL
+    args = parse_args()
+    url = args.url
     capture = cv2.VideoCapture(url)
     if not capture.isOpened():
         sys.exit(f"Could not open stream: {url}")
     detector = PersonDetector()
 
-    start = datetime.now() + timedelta(seconds=5)
-    calendar = MockCalendar()
-    calendar.add_meeting(
-        Meeting("m1", ROOM_ID, "ahmet", start, start + timedelta(minutes=5))
-    )
-    runner = RoomRunner(
-        ROOM_ID,
-        calendar,
-        MockNotifier(),
-        MockPrompter(),
-        machine=RoomStateMachine(ROOM_ID, tolerance=timedelta(seconds=20)),
-    )
+    runner = build_runner(args.scenario)
 
     last_state = None
     try:
