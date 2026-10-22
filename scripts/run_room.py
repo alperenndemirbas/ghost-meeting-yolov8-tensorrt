@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import cv2
 import numpy as np
 
-from ghost_meeting.adapters.mock import MockCalendar, MockNotifier
+from ghost_meeting.adapters.mock import MockCalendar, MockNotifier, MockPrompter
 from ghost_meeting.core.ports import Meeting
 from ghost_meeting.core.state_machine import RoomStateMachine
 from ghost_meeting.runner import RoomRunner
@@ -61,6 +61,7 @@ async def main() -> None:
         ROOM_ID,
         calendar,
         MockNotifier(),
+        MockPrompter(),
         machine=RoomStateMachine(ROOM_ID, tolerance=timedelta(seconds=20)),
     )
 

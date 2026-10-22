@@ -1,8 +1,8 @@
 from datetime import datetime, timedelta
 
-from ghost_meeting.adapters.mock import MockCalendar, MockNotifier
-from ghost_meeting.core.actions import NotifyOrganizer
-from ghost_meeting.core.ports import CalendarProvider, Meeting, Notifier
+from ghost_meeting.adapters.mock import MockCalendar, MockNotifier, MockPrompter
+from ghost_meeting.core.actions import AskToReserve, NotifyOrganizer
+from ghost_meeting.core.ports import CalendarProvider, Meeting, Notifier, Prompter
 
 T0 = datetime(2026, 1, 1, 10, 0, 0)
 
@@ -18,6 +18,13 @@ def test_mock_notifier_records_actions():
     assert notifier.sent == [action]
 
 
+def test_mock_prompter_records_actions():
+    prompter = MockPrompter()
+    action = AskToReserve("room1")
+    prompter.ask_to_reserve(action)
+    assert prompter.asked == [action]
+
+
 def test_mock_calendar_returns_only_requested_room():
     calendar = MockCalendar()
     calendar.add_meeting(make_meeting("m1", "room1"))
@@ -28,5 +35,6 @@ def test_mock_calendar_returns_only_requested_room():
 def test_mocks_fit_the_ports():
     # Type-checker level check: assigning proves the mocks satisfy the contracts.
     notifier: Notifier = MockNotifier()
+    prompter: Prompter = MockPrompter()
     calendar: CalendarProvider = MockCalendar()
-    assert notifier is not None and calendar is not None
+    assert notifier is not None and prompter is not None and calendar is not None

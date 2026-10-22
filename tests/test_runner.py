@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
-from ghost_meeting.adapters.mock import MockCalendar, MockNotifier
-from ghost_meeting.core.actions import NotifyOrganizer
+from ghost_meeting.adapters.mock import MockCalendar, MockNotifier, MockPrompter
+from ghost_meeting.core.actions import AskToReserve, NotifyOrganizer
 from ghost_meeting.core.ports import Meeting
 from ghost_meeting.core.state_machine import RoomState
 from ghost_meeting.runner import RoomRunner
@@ -17,7 +17,7 @@ def make_runner() -> tuple[RoomRunner, MockNotifier]:
     calendar = MockCalendar()
     calendar.add_meeting(Meeting("m1", "room1", "ahmet", at(0), at(60)))
     notifier = MockNotifier()
-    return RoomRunner("room1", calendar, notifier), notifier
+    return RoomRunner("room1", calendar, notifier, MockPrompter()), notifier
 
 
 def test_nobody_shows_up_organizer_gets_notified():
@@ -51,3 +51,30 @@ def test_same_meeting_is_not_started_twice():
     for minute in range(0, 30):
         runner.advance(at(minute), person_count=0)
     assert len(notifier.sent) == 1
+
+
+# --- Scenario 2 end to end: no meeting booked, someone walks in and stays ---
+def make_empty_calendar_runner() -> tuple[RoomRunner, MockPrompter]:
+    prompter = MockPrompter()
+    runner = RoomRunner("room1", MockCalendar(), MockNotifier(), prompter=prompter)
+    return runner, prompter
+
+
+def test_person_staying_in_unbooked_room_gets_asked_once():
+    runner, prompter = make_empty_calendar_runner()
+    runner.advance(at(0), person_count=1)
+    runner.advance(at(0) + timedelta(seconds=3), person_count=1)  # debounce passes
+    runner.advance(at(1), person_count=1)
+    assert prompter.asked == []
+    runner.advance(at(2.1), person_count=1)
+    assert prompter.asked == [AskToReserve("room1")]
+    runner.advance(at(30), person_count=1)
+    assert len(prompter.asked) == 1
+
+
+def test_person_passing_through_is_not_asked():
+    runner, prompter = make_empty_calendar_runner()
+    runner.advance(at(0), person_count=1)
+    runner.advance(at(0) + timedelta(seconds=1), person_count=0)  # gone before debounce
+    runner.advance(at(10), person_count=0)
+    assert prompter.asked == []

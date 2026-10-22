@@ -7,7 +7,7 @@ Time comes in as an argument, so a test can simulate hours in microseconds.
 
 from datetime import datetime
 
-from ghost_meeting.core.actions import Action, NotifyOrganizer
+from ghost_meeting.core.actions import Action, AskToReserve, NotifyOrganizer
 from ghost_meeting.core.events import (
     Event,
     MeetingEnded,
@@ -16,7 +16,7 @@ from ghost_meeting.core.events import (
     Tick,
 )
 from ghost_meeting.core.occupancy import OccupancyTracker
-from ghost_meeting.core.ports import CalendarProvider, Notifier
+from ghost_meeting.core.ports import CalendarProvider, Notifier, Prompter
 from ghost_meeting.core.state_machine import RoomStateMachine
 
 
@@ -26,6 +26,7 @@ class RoomRunner:
         room_id: str,
         calendar: CalendarProvider,
         notifier: Notifier,
+        prompter: Prompter,
         machine: RoomStateMachine | None = None,
         tracker: OccupancyTracker | None = None,
     ) -> None:
@@ -34,6 +35,7 @@ class RoomRunner:
         self._tracker = tracker or OccupancyTracker()
         self._calendar = calendar
         self._notifier = notifier
+        self._prompter = prompter
         self._started: set[str] = set()
         self._ended: set[str] = set()
 
@@ -71,3 +73,5 @@ class RoomRunner:
     def _dispatch(self, action: Action) -> None:
         if isinstance(action, NotifyOrganizer):
             self._notifier.notify_organizer(action)
+        elif isinstance(action, AskToReserve):
+            self._prompter.ask_to_reserve(action)

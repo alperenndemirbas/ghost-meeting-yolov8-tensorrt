@@ -1,6 +1,6 @@
 """Fake adapters for development and tests: no network, fully controllable."""
 
-from ghost_meeting.core.actions import NotifyOrganizer
+from ghost_meeting.core.actions import AskToReserve, NotifyOrganizer
 from ghost_meeting.core.ports import Meeting
 
 
@@ -13,6 +13,17 @@ class MockNotifier:
     def notify_organizer(self, action: NotifyOrganizer) -> None:
         self.sent.append(action)
         print(f"[MockNotifier] {action.organizer}: {action.meeting_id} odasına gelmedin mi? ({action.room_id})")
+
+
+class MockPrompter:
+    """Records spoken questions instead of playing them through a speaker."""
+
+    def __init__(self) -> None:
+        self.asked: list[AskToReserve] = []
+
+    def ask_to_reserve(self, action: AskToReserve) -> None:
+        self.asked.append(action)
+        print(f"[MockPrompter] ({action.room_id}) Odayı sizin için ayıralım mı?")
 
 
 class MockCalendar:

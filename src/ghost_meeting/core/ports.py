@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from ghost_meeting.core.actions import NotifyOrganizer
+from ghost_meeting.core.actions import AskToReserve, NotifyOrganizer
 
 
 @dataclass(frozen=True)
@@ -22,6 +22,10 @@ class Meeting:
 
 class Notifier(Protocol):
     def notify_organizer(self, action: NotifyOrganizer) -> None: ...
+
+
+class Prompter(Protocol):
+    def ask_to_reserve(self, action: AskToReserve) -> None: ...
 
 
 class CalendarProvider(Protocol):
