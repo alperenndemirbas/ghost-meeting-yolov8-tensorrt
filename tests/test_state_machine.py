@@ -1,9 +1,11 @@
 from datetime import datetime, timedelta
 
-from ghost_meeting.core.actions import AskToReserve, NotifyOrganizer
+from ghost_meeting.core.actions import AskToReserve, NotifyOrganizer, ReleaseRoom
 from ghost_meeting.core.events import (
     MeetingEnded,
     MeetingStarted,
+    OrganizerReplied,
+    Reply,
     RoomOccupied,
     RoomVacated,
     Tick,
@@ -137,3 +139,86 @@ def test_never_asks_while_a_meeting_is_in_progress():
     machine.handle(meeting_started())
     machine.handle(occupied(1))
     assert machine.handle(tick(30)) == []
+
+
+# --- Organizer's answer to the no-show message ---
+def replied(minutes: float, reply: Reply, meeting_id: str = "m1") -> OrganizerReplied:
+    return OrganizerReplied(
+        room_id="room1", timestamp=at(minutes), meeting_id=meeting_id, reply=reply
+    )
+
+
+def notified_machine() -> RoomStateMachine:
+    """Meeting m1 started at 0, organizer was notified at minute 10."""
+    machine = RoomStateMachine(
+        "room1", reply_timeout=timedelta(minutes=5), grace=timedelta(minutes=10)
+    )
+    machine.handle(meeting_started())
+    machine.handle(tick(10))
+    return machine
+
+
+def test_cancel_reply_releases_room_immediately():
+    machine = notified_machine()
+    actions = machine.handle(replied(11, Reply.CANCEL))
+    assert actions == [ReleaseRoom("room1", "m1")]
+    assert machine.state == RoomState.IDLE
+
+
+def test_no_reply_releases_room_after_reply_timeout():
+    machine = notified_machine()
+    assert machine.handle(tick(14.9)) == []
+    assert machine.handle(tick(15)) == [ReleaseRoom("room1", "m1")]
+    assert machine.state == RoomState.IDLE
+
+
+def test_room_is_released_only_once():
+    machine = notified_machine()
+    machine.handle(tick(15))
+    assert machine.handle(tick(16)) == []
+
+
+def test_coming_reply_gives_extra_grace_from_the_reply_time():
+    machine = notified_machine()
+    assert machine.handle(replied(11, Reply.COMING)) == []
+    assert machine.state == RoomState.ORGANIZER_COMING
+    # the 5-minute reply timeout no longer applies
+    assert machine.handle(tick(15)) == []
+    assert machine.handle(tick(20.9)) == []
+    assert machine.handle(tick(21)) == [ReleaseRoom("room1", "m1")]
+    assert machine.state == RoomState.IDLE
+
+
+def test_arriving_after_coming_reply_keeps_the_room():
+    machine = notified_machine()
+    machine.handle(replied(11, Reply.COMING))
+    machine.handle(occupied(14))
+    assert machine.state == RoomState.MEETING_IN_PROGRESS
+    assert machine.handle(tick(30)) == []
+
+
+def test_arriving_before_reply_timeout_keeps_the_room():
+    machine = notified_machine()
+    machine.handle(occupied(12))
+    assert machine.handle(tick(20)) == []
+    assert machine.state == RoomState.MEETING_IN_PROGRESS
+
+
+def test_reply_for_another_meeting_is_ignored():
+    machine = notified_machine()
+    assert machine.handle(replied(11, Reply.CANCEL, meeting_id="other")) == []
+    assert machine.state == RoomState.NO_SHOW_NOTIFIED
+
+
+def test_late_reply_after_room_was_released_is_ignored():
+    machine = notified_machine()
+    machine.handle(tick(15))
+    assert machine.handle(replied(16, Reply.CANCEL)) == []
+    assert machine.state == RoomState.IDLE
+
+
+def test_cancel_reply_after_organizer_arrived_is_ignored():
+    machine = notified_machine()
+    machine.handle(occupied(12))
+    assert machine.handle(replied(13, Reply.CANCEL)) == []
+    assert machine.state == RoomState.MEETING_IN_PROGRESS

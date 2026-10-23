@@ -5,6 +5,7 @@ Every event is an immutable record of "something happened in a room at a given t
 
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 
 
 @dataclass(frozen=True)
@@ -46,3 +47,15 @@ class MeetingStarted(Event):
 @dataclass(frozen=True)
 class MeetingEnded(Event):
     meeting_id: str
+
+
+# --- Messaging: the organizer answered the no-show message ---
+class Reply(Enum):
+    COMING = "coming"
+    CANCEL = "cancel"
+
+
+@dataclass(frozen=True)
+class OrganizerReplied(Event):
+    meeting_id: str
+    reply: Reply
