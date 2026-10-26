@@ -5,6 +5,7 @@ events, feeds them to the state machine, and hands the resulting actions to adap
 Time comes in as an argument, so a test can simulate hours in microseconds.
 """
 
+import queue
 from datetime import datetime
 
 from ghost_meeting.core.actions import Action, AskToReserve, NotifyOrganizer, ReleaseRoom
@@ -38,10 +39,20 @@ class RoomRunner:
         self._prompter = prompter
         self._started: set[str] = set()
         self._ended: set[str] = set()
+        self._mailbox: queue.Queue[Event] = queue.Queue()
+
+    def submit(self, event: Event) -> None:
+        """Drop an event in the mailbox. Safe to call from any thread (e.g. Slack's).
+
+        It is only processed on the next `advance`, so the state machine is
+        always touched by a single thread.
+        """
+        self._mailbox.put(event)
 
     def advance(self, now: datetime, person_count: int | None = None) -> None:
         """Move the room's clock to `now`, optionally with a fresh camera reading."""
-        events: list[Event] = self._calendar_events(now)
+        events: list[Event] = self._drain_mailbox()
+        events += self._calendar_events(now)
 
         if person_count is not None:
             observation = PersonCountObserved(self.room_id, now, person_count)
@@ -54,6 +65,14 @@ class RoomRunner:
         for event in events:
             for action in self.machine.handle(event):
                 self._dispatch(action)
+
+    def _drain_mailbox(self) -> list[Event]:
+        events: list[Event] = []
+        while True:
+            try:
+                events.append(self._mailbox.get_nowait())
+            except queue.Empty:
+                return events
 
     def _calendar_events(self, now: datetime) -> list[Event]:
         events: list[Event] = []

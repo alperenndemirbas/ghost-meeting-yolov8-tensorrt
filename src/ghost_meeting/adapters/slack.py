@@ -1,8 +1,14 @@
-"""Real Notifier: sends the organizer a Slack direct message with buttons."""
+"""Slack side of the organizer dialogue: sends the buttoned DM, decodes the clicks."""
 
+from collections.abc import Callable
+from datetime import datetime
 from typing import Protocol
 
+from slack_bolt import App
+from slack_bolt.adapter.socket_mode import SocketModeHandler
+
 from ghost_meeting.core.actions import NotifyOrganizer
+from ghost_meeting.core.events import OrganizerReplied, Reply
 
 ACTION_COMING = "organizer_coming"
 ACTION_CANCEL = "organizer_cancel"
@@ -46,6 +52,52 @@ class SlackNotifier:
                 },
             ],
         )
+
+
+_REPLIES = {ACTION_COMING: Reply.COMING, ACTION_CANCEL: Reply.CANCEL}
+
+
+def reply_from_click(
+    room_id: str, action_id: str, meeting_id: str, now: datetime
+) -> OrganizerReplied:
+    """Translate a Slack button click into the core's own language (an event)."""
+    reply = _REPLIES.get(action_id)
+    if reply is None:
+        raise ValueError(f"Unknown button action_id {action_id!r}")
+    return OrganizerReplied(room_id, now, meeting_id, reply)
+
+
+def make_click_handler(
+    room_id: str,
+    submit: Callable[[OrganizerReplied], None],
+    clock: Callable[[], datetime] = datetime.now,
+) -> Callable[..., None]:
+    """Build the function Bolt calls when a button is clicked.
+
+    `submit` is e.g. `runner.submit`; `clock` is injectable so tests control time.
+    """
+
+    def handle_click(ack: Callable[[], None], body: dict) -> None:
+        ack()  # Slack wants an answer within 3 s, so this comes before anything else
+        action = body["actions"][0]
+        submit(reply_from_click(room_id, action["action_id"], action["value"], clock()))
+
+    return handle_click
+
+
+def start_click_listener(
+    bot_token: str, app_token: str, handler: Callable[..., None]
+) -> SocketModeHandler:
+    """Connect to Slack over Socket Mode and route both buttons to `handler`.
+
+    Returns right away: Bolt runs the connection in its own background thread.
+    """
+    app = App(token=bot_token)
+    for action_id in _REPLIES:
+        app.action(action_id)(handler)
+    socket = SocketModeHandler(app, app_token)
+    socket.connect()
+    return socket
 
 
 def _button(label: str, action_id: str, meeting_id: str) -> dict:

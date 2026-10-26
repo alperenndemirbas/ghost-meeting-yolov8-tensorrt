@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 
 from ghost_meeting.adapters.mock import MockCalendar, MockNotifier, MockPrompter
 from ghost_meeting.core.actions import AskToReserve, NotifyOrganizer
+from ghost_meeting.core.events import OrganizerReplied, Reply
 from ghost_meeting.core.ports import Meeting
 from ghost_meeting.core.state_machine import RoomState
 from ghost_meeting.runner import RoomRunner
@@ -62,6 +63,34 @@ def test_unanswered_no_show_releases_room_in_the_calendar():
         runner.advance(at(minute), person_count=0)
     assert calendar.meetings_for("room1") == []
     assert runner.machine.state == RoomState.IDLE
+
+
+# --- Replies arriving from another thread (Slack) through the runner's mailbox ---
+def make_notified_runner() -> tuple[RoomRunner, MockCalendar]:
+    calendar = MockCalendar()
+    calendar.add_meeting(Meeting("m1", "room1", "ahmet", at(0), at(60)))
+    runner = RoomRunner("room1", calendar, MockNotifier(), MockPrompter())
+    for minute in range(0, 11):  # organizer gets notified at minute 10
+        runner.advance(at(minute), person_count=0)
+    assert runner.machine.state == RoomState.NO_SHOW_NOTIFIED
+    return runner, calendar
+
+
+def test_submitted_cancel_reply_releases_room_on_next_advance():
+    runner, calendar = make_notified_runner()
+    runner.submit(OrganizerReplied("room1", at(11), "m1", Reply.CANCEL))
+    assert len(calendar.meetings_for("room1")) == 1  # nothing happens until advance
+    runner.advance(at(11), person_count=0)
+    assert calendar.meetings_for("room1") == []
+    assert runner.machine.state == RoomState.IDLE
+
+
+def test_submitted_coming_reply_keeps_the_meeting():
+    runner, calendar = make_notified_runner()
+    runner.submit(OrganizerReplied("room1", at(11), "m1", Reply.COMING))
+    runner.advance(at(11), person_count=0)
+    assert len(calendar.meetings_for("room1")) == 1
+    assert runner.machine.state == RoomState.ORGANIZER_COMING
 
 
 # --- Scenario 2 end to end: no meeting booked, someone walks in and stays ---
