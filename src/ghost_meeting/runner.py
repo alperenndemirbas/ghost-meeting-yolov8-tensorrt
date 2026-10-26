@@ -7,7 +7,7 @@ Time comes in as an argument, so a test can simulate hours in microseconds.
 
 from datetime import datetime
 
-from ghost_meeting.core.actions import Action, AskToReserve, NotifyOrganizer
+from ghost_meeting.core.actions import Action, AskToReserve, NotifyOrganizer, ReleaseRoom
 from ghost_meeting.core.events import (
     Event,
     MeetingEnded,
@@ -75,3 +75,5 @@ class RoomRunner:
             self._notifier.notify_organizer(action)
         elif isinstance(action, AskToReserve):
             self._prompter.ask_to_reserve(action)
+        elif isinstance(action, ReleaseRoom):
+            self._calendar.cancel_meeting(action.room_id, action.meeting_id)

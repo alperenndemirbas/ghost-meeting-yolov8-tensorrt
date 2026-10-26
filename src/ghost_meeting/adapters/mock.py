@@ -37,3 +37,9 @@ class MockCalendar:
 
     def meetings_for(self, room_id: str) -> list[Meeting]:
         return [m for m in self._meetings if m.room_id == room_id]
+
+    def cancel_meeting(self, room_id: str, meeting_id: str) -> None:
+        self._meetings = [
+            m for m in self._meetings
+            if not (m.room_id == room_id and m.meeting_id == meeting_id)
+        ]

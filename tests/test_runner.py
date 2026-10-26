@@ -53,6 +53,17 @@ def test_same_meeting_is_not_started_twice():
     assert len(notifier.sent) == 1
 
 
+def test_unanswered_no_show_releases_room_in_the_calendar():
+    calendar = MockCalendar()
+    calendar.add_meeting(Meeting("m1", "room1", "ahmet", at(0), at(60)))
+    runner = RoomRunner("room1", calendar, MockNotifier(), MockPrompter())
+    # Notified at minute 10; the 5 min reply window then runs out with no answer.
+    for minute in range(0, 17):
+        runner.advance(at(minute), person_count=0)
+    assert calendar.meetings_for("room1") == []
+    assert runner.machine.state == RoomState.IDLE
+
+
 # --- Scenario 2 end to end: no meeting booked, someone walks in and stays ---
 def make_empty_calendar_runner() -> tuple[RoomRunner, MockPrompter]:
     prompter = MockPrompter()

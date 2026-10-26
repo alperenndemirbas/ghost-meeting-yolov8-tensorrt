@@ -32,6 +32,21 @@ def test_mock_calendar_returns_only_requested_room():
     assert [m.meeting_id for m in calendar.meetings_for("room1")] == ["m1"]
 
 
+def test_mock_calendar_cancel_removes_only_that_meeting():
+    calendar = MockCalendar()
+    calendar.add_meeting(make_meeting("m1", "room1"))
+    calendar.add_meeting(make_meeting("m2", "room1"))
+    calendar.cancel_meeting("room1", "m1")
+    assert [m.meeting_id for m in calendar.meetings_for("room1")] == ["m2"]
+
+
+def test_mock_calendar_cancel_unknown_meeting_is_harmless():
+    calendar = MockCalendar()
+    calendar.add_meeting(make_meeting("m1", "room1"))
+    calendar.cancel_meeting("room1", "nope")
+    assert len(calendar.meetings_for("room1")) == 1
+
+
 def test_mocks_fit_the_ports():
     # Type-checker level check: assigning proves the mocks satisfy the contracts.
     notifier: Notifier = MockNotifier()
