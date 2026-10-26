@@ -10,7 +10,13 @@ requires-python = ">=3.11"
 # Runtime dependencies are added step by step, as each one is first needed.
 # torch is intentionally not listed: the CUDA build must come from the PyTorch index
 # (pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128).
-dependencies = ["ultralytics", "slack-bolt", "python-dotenv"]
+dependencies = [
+    "ultralytics",
+    "slack-bolt",
+    "python-dotenv",
+    "google-api-python-client",
+    "google-auth-oauthlib",
+]
 
 [project.optional-dependencies]
 dev = ["pytest"]

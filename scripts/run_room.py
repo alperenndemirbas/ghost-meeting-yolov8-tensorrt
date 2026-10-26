@@ -1,9 +1,11 @@
-"""Live demo: python scripts/run_room.py [rtsp url] [--scenario 1|2] [--slack ID]  (q stops)
+"""Live demo: python scripts/run_room.py [rtsp url] [--scenario 1|2] [--slack ID]
+[--google --organizer EMAIL] [--tolerance-seconds N]  (q stops)
 
 Scenario 1 (default): a fake meeting starts in 5 seconds with a 20 second tolerance.
 Stay out of the camera's view and the MockNotifier complains about 25 seconds from now.
 Scenario 2: no meeting is booked. Walk into view and stay for 15 seconds, and the
 MockPrompter asks whether to reserve the room.
+--google: use the room account's real Google Calendar (book a meeting there yourself).
 A debug window shows what the camera sees, with boxes around detected people.
 """
 
@@ -12,21 +14,27 @@ import asyncio
 import os
 import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import cv2
 import numpy as np
 from dotenv import load_dotenv
+from googleapiclient.discovery import build
 from slack_sdk import WebClient
 
+from ghost_meeting.adapters.cached import CachedCalendar
+from ghost_meeting.adapters.google_auth import get_credentials
+from ghost_meeting.adapters.google_calendar import GoogleCalendar
 from ghost_meeting.adapters.mock import MockCalendar, MockNotifier, MockPrompter
 from ghost_meeting.adapters.slack import SlackNotifier, make_click_handler, start_click_listener
-from ghost_meeting.core.ports import Meeting, Notifier
+from ghost_meeting.core.ports import CalendarProvider, Meeting, Notifier
 from ghost_meeting.core.state_machine import RoomStateMachine
 from ghost_meeting.runner import RoomRunner
 from ghost_meeting.vision.detector import Detection, PersonDetector
 
 DEFAULT_URL = "rtsp://localhost:8554/room1"
 ROOM_ID = "room1"
+SECRETS_DIR = Path(__file__).resolve().parent.parent / "secrets"
 
 
 GREEN = (0, 255, 0)  # OpenCV colors are BGR, not RGB
@@ -52,7 +60,7 @@ def draw_overlay(frame: np.ndarray, detections: list[Detection], state_name: str
     cv2.putText(frame, status, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, GREEN, 2)
 
 
-def build_runner(scenario: int, notifier: Notifier | None = None) -> RoomRunner:
+def mock_calendar(scenario: int) -> CalendarProvider:
     """Scenario 1 books a fake meeting; scenario 2 leaves the calendar empty."""
     calendar = MockCalendar()
     if scenario == 1:
@@ -60,23 +68,37 @@ def build_runner(scenario: int, notifier: Notifier | None = None) -> RoomRunner:
         calendar.add_meeting(
             Meeting("m1", ROOM_ID, "ahmet", start, start + timedelta(minutes=5))
         )
-    machine = RoomStateMachine(
-        ROOM_ID, tolerance=timedelta(seconds=20), dwell=timedelta(seconds=15)
-    )
+    return calendar
+
+
+def google_calendar() -> CalendarProvider:
+    """The room account's primary calendar, asked at most every 30 s."""
+    service = build("calendar", "v3", credentials=get_credentials(SECRETS_DIR))
+    return CachedCalendar(GoogleCalendar(service, {ROOM_ID: "primary"}))
+
+
+def build_runner(
+    calendar: CalendarProvider,
+    notifier: Notifier | None = None,
+    tolerance: timedelta | None = None,
+) -> RoomRunner:
+    """`tolerance` None keeps the state machine's real default (10 min)."""
+    options = {} if tolerance is None else {"tolerance": tolerance}
+    machine = RoomStateMachine(ROOM_ID, dwell=timedelta(seconds=15), **options)
     return RoomRunner(
         ROOM_ID, calendar, notifier or MockNotifier(), MockPrompter(), machine=machine
     )
 
 
-def connect_slack(user_id: str) -> tuple[Notifier, str, str]:
+def connect_slack(user_id: str, organizer: str) -> tuple[Notifier, str, str]:
     """Reads the tokens from .env; returns the notifier plus the two tokens."""
     load_dotenv()
     bot_token = os.environ.get("SLACK_BOT_TOKEN")
     app_token = os.environ.get("SLACK_APP_TOKEN")
     if not bot_token or not app_token:
         sys.exit("SLACK_BOT_TOKEN or SLACK_APP_TOKEN is missing; check your .env file")
-    # "ahmet" is the fake meeting's organizer; here it maps to you.
-    notifier = SlackNotifier(WebClient(token=bot_token), user_ids={"ahmet": user_id})
+    # Whoever the calendar names as `organizer` is reached on your Slack account.
+    notifier = SlackNotifier(WebClient(token=bot_token), user_ids={organizer: user_id})
     return notifier, bot_token, app_token
 
 
@@ -88,7 +110,23 @@ def parse_args() -> argparse.Namespace:
         "--slack", metavar="MEMBER_ID",
         help="send real Slack DMs to this member and listen for their button clicks",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--google", action="store_true",
+        help="use the room's real Google Calendar instead of the fake one (ignores --scenario)",
+    )
+    parser.add_argument(
+        "--organizer", metavar="EMAIL",
+        help="with --google --slack: the organizer's e-mail whose messages come to you",
+    )
+    parser.add_argument(
+        "--tolerance-seconds", type=int, metavar="N",
+        help="how long to wait for the organizer (default: 20 with the fake calendar, "
+        "the real 10 minutes with --google)",
+    )
+    args = parser.parse_args()
+    if args.google and args.slack and not args.organizer:
+        parser.error("--google with --slack needs --organizer <e-mail>")
+    return args
 
 
 async def main() -> None:
@@ -99,17 +137,27 @@ async def main() -> None:
         sys.exit(f"Could not open stream: {url}")
     detector = PersonDetector()
 
+    if args.google:
+        calendar = google_calendar()
+    else:
+        calendar = mock_calendar(args.scenario)
+    if args.tolerance_seconds is not None:
+        tolerance = timedelta(seconds=args.tolerance_seconds)
+    else:
+        tolerance = None if args.google else timedelta(seconds=20)
+
     socket = None
     if args.slack:
-        notifier, bot_token, app_token = connect_slack(args.slack)
-        runner = build_runner(args.scenario, notifier)
+        organizer = args.organizer or "ahmet"  # "ahmet" is the fake calendar's organizer
+        notifier, bot_token, app_token = connect_slack(args.slack, organizer)
+        runner = build_runner(calendar, notifier, tolerance)
         # Clicks arrive on Bolt's thread and land in the runner's mailbox.
         socket = start_click_listener(
             bot_token, app_token, make_click_handler(ROOM_ID, runner.submit)
         )
         print("Slack listener connected")
     else:
-        runner = build_runner(args.scenario)
+        runner = build_runner(calendar, tolerance=tolerance)
 
     last_state = None
     try:
