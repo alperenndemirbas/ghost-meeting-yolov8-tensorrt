@@ -12,6 +12,7 @@ from ghost_meeting.core.events import OrganizerReplied, Reply
 
 ACTION_COMING = "organizer_coming"
 ACTION_CANCEL = "organizer_cancel"
+ANSWERED_TEXT = "✅ Cevabınız alındı."
 
 
 class UnknownOrganizerError(LookupError):
@@ -77,10 +78,16 @@ def make_click_handler(
     `submit` is e.g. `runner.submit`; `clock` is injectable so tests control time.
     """
 
-    def handle_click(ack: Callable[[], None], body: dict) -> None:
+    def handle_click(ack: Callable[[], None], body: dict, respond: Callable[..., None]) -> None:
         ack()  # Slack wants an answer within 3 s, so this comes before anything else
         action = body["actions"][0]
         submit(reply_from_click(room_id, action["action_id"], action["value"], clock()))
+        # Swap the buttoned message for plain text so the buttons can't be clicked again
+        respond(
+            replace_original=True,
+            text=ANSWERED_TEXT,
+            blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": ANSWERED_TEXT}}],
+        )
 
     return handle_click
 

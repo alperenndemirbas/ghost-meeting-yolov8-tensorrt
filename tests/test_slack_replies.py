@@ -39,10 +39,31 @@ def test_click_handler_acks_and_submits_the_event():
     acked: list[bool] = []
     handler = make_click_handler("room1", submitted.append, clock=lambda: NOW)
 
-    handler(ack=lambda: acked.append(True), body=click_body(ACTION_CANCEL, "m1"))
+    handler(
+        ack=lambda: acked.append(True),
+        body=click_body(ACTION_CANCEL, "m1"),
+        respond=lambda **kwargs: None,
+    )
 
     assert acked == [True]
     assert submitted == [OrganizerReplied("room1", NOW, "m1", Reply.CANCEL)]
+
+
+def test_click_handler_replaces_the_message_so_the_buttons_disappear():
+    responses: list[dict] = []
+    handler = make_click_handler("room1", lambda event: None, clock=lambda: NOW)
+
+    handler(
+        ack=lambda: None,
+        body=click_body(ACTION_COMING, "m1"),
+        respond=lambda **kwargs: responses.append(kwargs),
+    )
+
+    assert len(responses) == 1
+    assert responses[0]["replace_original"] is True
+    assert "Cevabınız alındı" in responses[0]["text"]
+    # No "actions" block left, so there is nothing to click again
+    assert all(block["type"] != "actions" for block in responses[0]["blocks"])
 
 
 def test_click_handler_acks_even_when_the_button_is_unknown():
@@ -51,6 +72,10 @@ def test_click_handler_acks_even_when_the_button_is_unknown():
     handler = make_click_handler("room1", lambda event: None, clock=lambda: NOW)
 
     with pytest.raises(ValueError):
-        handler(ack=lambda: acked.append(True), body=click_body("something_else", "m1"))
+        handler(
+            ack=lambda: acked.append(True),
+            body=click_body("something_else", "m1"),
+            respond=lambda **kwargs: None,
+        )
 
     assert acked == [True]
