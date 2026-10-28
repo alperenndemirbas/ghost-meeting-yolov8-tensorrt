@@ -1,5 +1,5 @@
 """Live demo: python scripts/run_room.py [rtsp url] [--scenario 1|2] [--slack ID]
-[--google --organizer EMAIL] [--tolerance-seconds N]  (q stops)
+[--google --organizer EMAIL] [--voice] [--tolerance-seconds N]  (q stops)
 
 Scenario 1 (default): a fake meeting starts in 5 seconds with a 20 second tolerance.
 Stay out of the camera's view and the MockNotifier complains about 25 seconds from now.
@@ -27,14 +27,17 @@ from ghost_meeting.adapters.google_auth import get_credentials
 from ghost_meeting.adapters.google_calendar import GoogleCalendar
 from ghost_meeting.adapters.mock import MockCalendar, MockNotifier, MockPrompter
 from ghost_meeting.adapters.slack import SlackNotifier, make_click_handler, start_click_listener
-from ghost_meeting.core.ports import CalendarProvider, Meeting, Notifier
+from ghost_meeting.adapters.voice import VoicePrompter, piper_speaker, speak_in_background
+from ghost_meeting.core.ports import CalendarProvider, Meeting, Notifier, Prompter
 from ghost_meeting.core.state_machine import RoomStateMachine
 from ghost_meeting.runner import RoomRunner
 from ghost_meeting.vision.detector import Detection, PersonDetector
 
 DEFAULT_URL = "rtsp://localhost:8554/room1"
 ROOM_ID = "room1"
-SECRETS_DIR = Path(__file__).resolve().parent.parent / "secrets"
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+SECRETS_DIR = PROJECT_DIR / "secrets"
+VOICE_MODEL = PROJECT_DIR / "models" / "tts" / "tr_TR-dfki-medium.onnx"
 
 
 GREEN = (0, 255, 0)  # OpenCV colors are BGR, not RGB
@@ -77,16 +80,26 @@ def google_calendar() -> CalendarProvider:
     return CachedCalendar(GoogleCalendar(service, {ROOM_ID: "primary"}))
 
 
+def voice_prompter() -> Prompter:
+    """Speaks the question through the speaker; the camera loop keeps running meanwhile."""
+    return VoicePrompter(speak_in_background(piper_speaker(VOICE_MODEL)))
+
+
 def build_runner(
     calendar: CalendarProvider,
     notifier: Notifier | None = None,
     tolerance: timedelta | None = None,
+    prompter: Prompter | None = None,
 ) -> RoomRunner:
     """`tolerance` None keeps the state machine's real default (10 min)."""
     options = {} if tolerance is None else {"tolerance": tolerance}
     machine = RoomStateMachine(ROOM_ID, dwell=timedelta(seconds=15), **options)
     return RoomRunner(
-        ROOM_ID, calendar, notifier or MockNotifier(), MockPrompter(), machine=machine
+        ROOM_ID,
+        calendar,
+        notifier or MockNotifier(),
+        prompter or MockPrompter(),
+        machine=machine,
     )
 
 
@@ -119,6 +132,10 @@ def parse_args() -> argparse.Namespace:
         help="with --google --slack: the organizer's e-mail whose messages come to you",
     )
     parser.add_argument(
+        "--voice", action="store_true",
+        help="say the reservation question out loud (Piper) instead of printing it",
+    )
+    parser.add_argument(
         "--tolerance-seconds", type=int, metavar="N",
         help="how long to wait for the organizer (default: 20 with the fake calendar, "
         "the real 10 minutes with --google)",
@@ -146,18 +163,20 @@ async def main() -> None:
     else:
         tolerance = None if args.google else timedelta(seconds=20)
 
+    prompter = voice_prompter() if args.voice else None
+
     socket = None
     if args.slack:
         organizer = args.organizer or "ahmet"  # "ahmet" is the fake calendar's organizer
         notifier, bot_token, app_token = connect_slack(args.slack, organizer)
-        runner = build_runner(calendar, notifier, tolerance)
+        runner = build_runner(calendar, notifier, tolerance, prompter)
         # Clicks arrive on Bolt's thread and land in the runner's mailbox.
         socket = start_click_listener(
             bot_token, app_token, make_click_handler(ROOM_ID, runner.submit)
         )
         print("Slack listener connected")
     else:
-        runner = build_runner(calendar, tolerance=tolerance)
+        runner = build_runner(calendar, tolerance=tolerance, prompter=prompter)
 
     last_state = None
     try:
